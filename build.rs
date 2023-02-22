@@ -326,7 +326,10 @@ fn main() -> Result<()> {
 	}
 
 	let job_server = build_job_server().ok_or("Can't create job server")?;
-	let generator_build = build_clang_generator()?;
+	let generator_source = match env::var_os("OPENCV_BINDING_GENERATOR") {
+        Some(osstr) => generator::GeneratorSource::Prebuilt(osstr.into()),
+        None => generator::GeneratorSource::Build(build_clang_generator()?),
+    };
 
 	eprintln!("=== Crate version: {:?}", env::var_os("CARGO_PKG_VERSION"));
 	eprintln!("=== Environment configuration:");
@@ -399,7 +402,7 @@ fn main() -> Result<()> {
 
 	setup_rerun()?;
 
-	generator::gen_wrapper(opencv_header_dir, &opencv, job_server, generator_build)?;
+	generator::gen_wrapper(opencv_header_dir, &opencv, job_server, generator_source)?;
 	build_wrapper(&opencv);
 	// -l linker args should be emitted after -l static
 	opencv.emit_cargo_metadata();

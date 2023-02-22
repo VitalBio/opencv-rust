@@ -11,6 +11,11 @@ use crate::docs::transfer_bindings_to_docs;
 
 use super::{files_with_extension, files_with_predicate, Library, Result, HOST_TRIPLE, MODULES, OUT_DIR, SRC_CPP_DIR, SRC_DIR};
 
+pub enum GeneratorSource {
+    Build(Child),
+    Prebuilt(PathBuf),
+}
+
 fn is_type_file(path: &Path, module: &str) -> bool {
 	path.file_stem().and_then(OsStr::to_str).map_or(false, |stem| {
 		let mut stem_chars = stem.chars();
@@ -34,7 +39,7 @@ fn copy_indent(mut read: impl BufRead, mut write: impl Write, indent: &str) -> R
 
 fn run_binding_generator(
 	modules: &'static [String],
-	mut generator_build: Child,
+	mut generator_source: GeneratorSource,
 	job_server: jobserver::Client,
 	opencv_header_dir: &Path,
 	opencv: &Library,
@@ -51,21 +56,27 @@ fn run_binding_generator(
 	let gen = opencv_binding_generator::Generator::new(opencv_header_dir, &additional_include_dirs, &SRC_CPP_DIR, clang);
 	eprintln!("=== Clang command line args: {:#?}", gen.build_clang_command_line_args());
 
-	eprintln!("=== Building binding-generator binary:");
-	if let Some(child_stderr) = generator_build.stderr.take() {
-		for line in BufReader::new(child_stderr).lines().flatten() {
-			eprintln!("=== {line}");
-		}
-	}
-	if let Some(child_stdout) = generator_build.stdout.take() {
-		for line in BufReader::new(child_stdout).lines().flatten() {
-			eprintln!("=== {line}");
-		}
-	}
-	let child_status = generator_build.wait()?;
-	if !child_status.success() {
-		return Err("Failed to build the bindings generator".into());
-	}
+    let generator = match generator_source {
+        GeneratorSource::Build(build) => {
+            eprintln!("=== Waiting until the binding-generator binary is built...");
+            let res = generator_build.wait_with_output()?;
+            if let Err(e) = io::stdout().write(&res.stdout) {
+                eprintln!("=== Can't write stdout: {:?}, error: {}", res.stdout, e)
+            }
+            if let Err(e) = io::stderr().write(&res.stderr) {
+                eprintln!("=== Can't write stderr: {:?}, error: {}", res.stdout, e)
+            }
+            if !res.status.success() {
+                return Err("Failed to build the bindings generator".into());
+            }
+
+            match HOST_TRIPLE.as_ref() {
+                Some(host_triple) => OUT_DIR.join(format!("{host_triple}/release/binding-generator")),
+                None => OUT_DIR.join("release/binding-generator"),
+            }
+        }
+        GeneratorSource::Prebuilt(path) => path,
+    };
 
 	let additional_include_dirs = Arc::new(
 		additional_include_dirs
@@ -82,17 +93,14 @@ fn run_binding_generator(
 	let mut join_handles = Vec::with_capacity(modules.len());
 	let start = Instant::now();
 	modules.iter().for_each(|module| {
+        let generator = generator.clone();
 		let token = job_server.acquire().expect("Can't acquire token from job server");
 		let join_handle = thread::spawn({
 			let additional_include_dirs = Arc::clone(&additional_include_dirs);
 			let opencv_header_dir = Arc::clone(&opencv_header_dir);
 			move || {
-				let mut bin_generator = match HOST_TRIPLE.as_ref() {
-					Some(host_triple) => Command::new(OUT_DIR.join(format!("{host_triple}/release/binding-generator"))),
-					None => Command::new(OUT_DIR.join("release/binding-generator")),
-				};
-				bin_generator
-					.arg(&*opencv_header_dir)
+				let mut bin_generator = Command::new(generator);
+				bin_generator.arg(&*opencv_header_dir)
 					.arg(&*SRC_CPP_DIR)
 					.arg(&*OUT_DIR)
 					.arg(module)
