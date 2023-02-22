@@ -39,7 +39,7 @@ fn copy_indent(mut read: impl BufRead, mut write: impl Write, indent: &str) -> R
 
 fn run_binding_generator(
 	modules: &'static [String],
-	mut generator_source: GeneratorSource,
+	generator_source: GeneratorSource,
 	job_server: jobserver::Client,
 	opencv_header_dir: &Path,
 	opencv: &Library,
@@ -59,7 +59,7 @@ fn run_binding_generator(
     let generator = match generator_source {
         GeneratorSource::Build(build) => {
             eprintln!("=== Waiting until the binding-generator binary is built...");
-            let res = generator_build.wait_with_output()?;
+            let res = build.wait_with_output()?;
             if let Err(e) = io::stdout().write(&res.stdout) {
                 eprintln!("=== Can't write stdout: {:?}, error: {}", res.stdout, e)
             }
@@ -268,7 +268,7 @@ pub fn gen_wrapper(
 	opencv_header_dir: &Path,
 	opencv: &Library,
 	job_server: jobserver::Client,
-	generator_build: Child,
+	generator_source: GeneratorSource,
 ) -> Result<()> {
 	let target_docs_dir = env::var_os("OCVRS_DOCS_GENERATE_DIR").map(PathBuf::from);
 	let target_module_dir = OUT_DIR.join("opencv");
@@ -293,7 +293,7 @@ pub fn gen_wrapper(
 
 	let modules = MODULES.get().expect("MODULES not initialized");
 
-	run_binding_generator(modules, generator_build, job_server, opencv_header_dir, opencv)?;
+	run_binding_generator(modules, generator_source, job_server, opencv_header_dir, opencv)?;
 
 	collect_generated_bindings(modules, &target_module_dir, &manual_dir)?;
 
