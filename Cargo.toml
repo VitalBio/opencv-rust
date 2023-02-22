@@ -19,8 +19,8 @@ doctest = false
 [badges]
 maintenance = { status = "actively-developed" }
 
-[workspace]
-members = ["binding-generator"]
+#[workspace]
+#members = ["binding-generator"]
 
 # requires CUDA
 #[[example]]
